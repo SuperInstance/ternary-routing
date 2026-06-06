@@ -1,0 +1,7 @@
+[package]
+name = "ternary-routing"
+version = "0.1.0"
+edition = "2021"
+description = "Self-optimizing request routing with ternary feedback. Routes get boosted (+1), penalized (-1), or unchanged (0) based on latency/success. Routes converge to optimal without central config."
+license = "Apache-2.0"
+repository = "https://github.com/SuperInstance/ternary-routing"
