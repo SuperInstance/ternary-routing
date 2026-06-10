@@ -1,94 +1,70 @@
 # ternary-routing
 
-Self-optimizing request routing with ternary feedback. Routes get boosted (+1), penalized (-1), or unchanged (0) based on latency/success. Routes converge to optimal without central config.
+Self-optimizing request routing with ternary feedback — routes get boosted (+1), penalized (-1), or stay neutral (0).
 
-## Why This Matters
+## Why This Exists
 
-# ternary-routing
-Self-optimizing request routing with ternary feedback.
-Routes get boosted (+1), penalized (-1), or neutral (0).
-Over time, traffic converges to optimal distribution.
+Load balancers typically use static weights or slow-converging adaptive algorithms. Ternary routing uses a minimal feedback signal: after each request, the route gets rated +1 (good), 0 (neutral), or -1 (bad). Over time, routes accumulate scores and traffic converges toward the best-performing backend. The ternary signal is coarse enough to be fast (no floating-point calculation) but expressive enough to differentiate healthy, degraded, and failing routes.
 
-## The Five-Layer Stack
+## Architecture
 
-This crate is part of the **Oxide Stack** — a distributed GPU runtime built on five layers:
+### Core Types
 
-```
-┌─────────────────┐
-│  cudaclaw        │  Persistent GPU kernels, warp consensus, SmartCRDT
-├─────────────────┤
-│  cuda-oxide      │  Flux → MIR → Pliron → NVVM → PTX compiler
-├─────────────────┤
-│  flux-core       │  Bytecode VM + A2A agent protocol
-├─────────────────┤
-│  pincher         │  "Vector DB as runtime, LLM as compiler"
-├─────────────────┤
-│  open-parallel   │  Async runtime (tokio fork)
-└─────────────────┘
-```
+- **`Feedback`** — Ternary: `Good (+1)`, `Neutral (0)`, `Bad (-1)`.
+- **`Route`** — A backend with accumulated score, request count, and weighted average.
+- **`TernaryRouter`** — Collection of routes with `select()` (highest score), `weighted_select()` (probabilistic), and `rebalance()`.
 
-The key insight: **ternary values {-1, 0, +1} map directly to GPU compute**. They pack 16× denser than FP32, enable XNOR+popcount matmul, and conservation laws become compile-time checks.
+### Selection Strategies
 
-## Design
-
-Every value in this crate follows **ternary algebra** (Z₃):
-
-| Value | Meaning | GPU Analog |
-|-------|---------|------------|
-| +1 | Positive / Active / Healthy | Warp vote yes |
-| 0 | Neutral / Pending / Balanced | Warp vote abstain |
-| -1 | Negative / Failed / Overloaded | Warp vote no |
-
-This isn't arbitrary — ternary is the natural encoding for:
-1. **BitNet b1.58** (Microsoft) — ternary LLMs at 60% less power
-2. **GPU warp voting** — hardware ballot returns ternary consensus
-3. **Conservation laws** — {-1, 0, +1} preserves quantity
-
-## Key Types
-
-```rust
-pub enum Feedback
-pub struct Route
-pub fn new
-pub fn record
-pub struct TernaryRouter
-pub fn new
-pub fn add_route
-pub fn select
-pub fn weighted_select
-pub fn record
-pub fn rebalance
-pub fn route_count
-```
+- **`select`**: Deterministic — always picks the highest-scoring route.
+- **`weighted_select`**: Probabilistic — softmax over scores, exploration/exploitation.
+- **`rebalance`**: Decay all scores toward zero, preventing stale leaders.
 
 ## Usage
 
-```toml
-[dependencies]
-ternary-routing = "0.1.0"
-```
-
 ```rust
-use ternary_routing::*;
-// See src/lib.rs tests for complete working examples
+use ternary_routing::{TernaryRouter, Feedback};
+
+let mut router = TernaryRouter::new();
+router.add_route("gpu-node-1");
+router.add_route("gpu-node-2");
+router.add_route("gpu-node-3");
+
+// Route traffic and collect feedback
+let route = router.select().unwrap();
+router.record("gpu-node-1", Feedback::Good);
+router.record("gpu-node-2", Feedback::Bad);
+router.record("gpu-node-3", Feedback::Neutral);
+
+// Check distribution
+let dist = router.distribution();
+// gpu-node-1 gets the most traffic
+
+// Periodically rebalance
+router.rebalance();
 ```
 
-## Testing
+## API Reference
 
-```bash
-git clone https://github.com/SuperInstance/ternary-routing.git
-cd ternary-routing
-cargo test    # 7 tests
-```
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `new()` | `TernaryRouter` | Create empty router |
+| `add_route(name)` | `()` | Register a backend |
+| `select()` | `Option<&Route>` | Pick highest-scoring route |
+| `weighted_select()` | `Option<&Route>` | Probabilistic selection |
+| `record(route_name, feedback)` | `()` | Submit ternary feedback |
+| `rebalance()` | `()` | Decay scores toward zero |
+| `route_count()` | `usize` | Number of routes |
+| `total_requests()` | `u64` | Requests routed |
+| `distribution()` | `HashMap<String, f64>` | Traffic fractions per route |
 
-## Stats
+## The Deeper Idea
 
-| Metric | Value |
-|--------|-------|
-| Tests | 7 |
-| Lines of Rust | 165 |
-| Public API | 14 items |
+This is **reinforcement learning stripped to its bones**. The ternary feedback is the reward signal (+1/0/-1), the route scores are the Q-values, and `select`/`weighted_select` are the policy. No neural networks, no gradient descent — just additive score tracking with decay. The ternary reward is the minimal information you need from the environment to learn which action is best. Anything more granular (e.g., latency in milliseconds) can be thresholded into these three buckets.
 
-## License
+## Related Crates
 
-Apache-2.0
+- **ternary-routing** — this crate
+- **ternary-backpressure** — upstream throttling based on downstream pressure
+- **ternary-rate-limiter** — rate limiting with ternary feedback
+- **ternary-dispatch** — kernel dispatch ordering
