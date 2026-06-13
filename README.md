@@ -85,6 +85,19 @@ Ternary routing directs traffic in **SuperInstance** fleet operations. Good rout
 - Krishnan, S. et al. "Moving Beyond End-to-End Path Information," *NSDI*, 2009.
 | Mitzenmacher, Michael & Upfal, Eli. *Probability and Computing*, Cambridge UP, 2017.
 
+
+
+## Complexity Summary
+
+| Operation | Time | Notes |
+|---|---|---|
+| Route selection (greedy) | O(r) for r routes | Linear scan |
+| Weighted selection | O(r) | Sum + pick |
+| Feedback record | O(1) | Score increment + weight update |
+| Rebalance | O(r) | Normalize all weights |
+
+Convergence to optimal routing is O(r × log(requests)) — after enough feedback, weights stabilize to an exponential distribution favoring the best routes.
+
 ## License
 
 Apache-2.0
